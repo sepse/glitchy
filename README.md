@@ -1,4 +1,4 @@
-# Room Sings
+# Glitchy
 
 *An ambient sound and light sculpture that lets a room sing its own air quality.*
 
