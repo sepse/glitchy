@@ -2,7 +2,7 @@
 
 *An ambient sound and light sculpture that lets a room sing its own air quality.*
 
-Room Sings is a small standalone device — an ESP32, three buzzers, eight
+Glitchy is a small standalone device — an ESP32, three buzzers, eight
 LEDs, and a handful of environmental sensors — that turns CO₂, VOC,
 particulate matter, and presence into sound and light. It doesn't display
 numbers. It doesn't alarm. It sits in a room and, quietly, tells you how
