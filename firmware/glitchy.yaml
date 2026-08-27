@@ -1,0 +1,1249 @@
+esphome:
+  name: sound-sculpture
+  friendly_name: Sound Sculpture
+
+esp32:
+  board: esp32dev            # generic ESP32-WROOM dev board profile
+  framework:
+    type: arduino
+
+# --- Networking / HA integration ---
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "Sound-Sculpture Fallback"
+    password: !secret fallback_ap_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+  level: DEBUG
+
+# ============================================================
+# --- Home Assistant sensor imports ---
+# Pulls in the four room sensors from HA via the native API.
+# These are marked `internal: true` since we're not re-exposing
+# them back to HA as new entities -- they already exist there,
+# we're just reading them for local automation logic.
+# ============================================================
+sensor:
+  # Buzzer assignment is now fixed per sensor, so which buzzer you
+  # hear tells you which sensor changed, without needing to look:
+  #   Buzzer 1 (GPIO25) -> CO2
+  #   Buzzer 2 (GPIO26) -> VOC
+  #   Buzzer 3 (GPIO27) -> PM2.5
+  # Three bands per sensor now (calm/elevated/high) instead of two,
+  # and each band has a period tracked in `..._band` globals below
+  # so the periodic re-trigger interval (further down) can keep
+  # sounding while a sensor STAYS elevated, not just at the moment
+  # it crosses -- this is the fix for sound feeling rare/unintuitive.
+  - platform: homeassistant
+    id: ha_co2
+    entity_id: sensor.pub_all_in_one_co2_pub
+    internal: true
+    on_value_range:
+      - below: 600.0
+        then:
+          - globals.set: {id: co2_band, value: '0'}
+      - above: 600.0
+        below: 1000.0
+        then:
+          - globals.set: {id: co2_band, value: '1'}
+          - logger.log: "CO2 entered ELEVATED band"
+          - script.execute:
+              id: glitch_dropout_1
+              base_freq: 500
+              duration_ms: 400
+      - above: 1000.0
+        then:
+          - globals.set: {id: co2_band, value: '2'}
+          - logger.log: "CO2 entered HIGH band"
+          - script.execute: glitch_stutter_1
+          - script.execute: led_array_stutter
+
+  - platform: homeassistant
+    id: ha_voc
+    entity_id: sensor.esphome_web_811aa0_voc
+    internal: true
+    # NOTE: band edges below (150 / 400) are a starting-point guess,
+    # not measured against your actual sensor's real-world range.
+    # Watch this sensor's normal resting value in HA for a few days
+    # once running, then adjust these numbers to match what "normal"
+    # vs "elevated" vs "high" actually look like in your room.
+    on_value_range:
+      - below: 150.0
+        then:
+          - globals.set: {id: voc_band, value: '0'}
+      - above: 150.0
+        below: 400.0
+        then:
+          - globals.set: {id: voc_band, value: '1'}
+          - if:
+              condition:
+                lambda: 'return id(room_awake);'
+              then:
+                - script.execute: glitch_freq_jump_1
+                - script.execute: led_array_scatter
+      - above: 400.0
+        then:
+          - globals.set: {id: voc_band, value: '2'}
+          - if:
+              condition:
+                lambda: 'return id(room_awake);'
+              then:
+                - script.execute: glitch_stutter_2
+                - script.execute: led_array_scatter
+
+  - platform: homeassistant
+    id: ha_pm
+    entity_id: esphome_web_811aa0_pm_4_m_weight_concentration
+    internal: true
+    # NOTE: band edges below (15 / 35 ug/m3) follow common PM2.5
+    # "moderate" / "unhealthy for sensitive groups" style breakpoints
+    # as a reasonable starting point -- adjust once you see real
+    # readings, same as VOC above.
+    on_value_range:
+      - below: 15.0
+        then:
+          - globals.set: {id: pm_band, value: '0'}
+      - above: 15.0
+        below: 35.0
+        then:
+          - globals.set: {id: pm_band, value: '1'}
+          - if:
+              condition:
+                lambda: 'return id(room_awake);'
+              then:
+                - script.execute:
+                    id: glitch_dropout_1
+                    base_freq: 440
+                    duration_ms: 1000
+                - script.execute:
+                    id: led_array_chase
+                    reverse: true
+      - above: 35.0
+        then:
+          - globals.set: {id: pm_band, value: '2'}
+          - if:
+              condition:
+                lambda: 'return id(room_awake);'
+              then:
+                - script.execute: glitch_stutter_3
+                - script.execute:
+                    id: led_array_chase
+                    reverse: true
+
+# ============================================================
+# --- Motion sensor: the "awake" gate ---
+# Rather than motion directly triggering sound/light, it instead
+# controls whether the room is considered "awake" -- VOC/PM
+# events only produce sound+light while awake. CO2 stays exempt
+# from this gate deliberately (see globals/interval section
+# below) since it's meant to be felt ambiently even in an empty
+# room, not treated as an event.
+# ============================================================
+binary_sensor:
+  - platform: homeassistant
+    id: ha_motion
+    entity_id: binary_sensor.pub_levizja
+    internal: true
+    # Using on_state (fires on any change, press or release) rather
+    # than separate on_press/on_release -- both cases do the exact
+    # same thing here (mark room awake, reset the sleep timeout), so
+    # there's no need to distinguish the two, and on_state sidesteps
+    # some historically-reported quirks with press/release edge
+    # detection on certain ESPHome versions/platforms.
+    on_state:
+      - globals.set:
+          id: room_awake
+          value: 'true'
+      - script.execute: motion_awake_timeout_reset
+
+globals:
+  - id: room_awake
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # Current band per sensor (0=calm, 1=elevated, 2=high), set by
+  # each sensor's on_value_range above. Read by the periodic
+  # re-trigger interval below so sound keeps recurring while a
+  # sensor STAYS in an elevated/high band, not just once at the
+  # moment it crosses in -- this is what makes sound feel present
+  # rather than a one-off you might miss.
+  - id: co2_band
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: voc_band
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: pm_band
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # Ambient breathing targets, one per sensor group. Used to scale
+  # LED floor brightness and blink rate (see interval below).
+  - id: co2_breath_target
+    type: float
+    restore_value: no
+    initial_value: '0.08'
+
+  - id: voc_breath_target
+    type: float
+    restore_value: no
+    initial_value: '0.08'
+
+  - id: pm_breath_target
+    type: float
+    restore_value: no
+    initial_value: '0.08'
+
+  # Which sensor group (0=CO2, 1=VOC, 2=PM, -1=none) should run a
+  # brief "attention pulse" this cycle -- set by the 8s interval,
+  # read by led_attention_pulse. Global so a script can read the
+  # decision made by the interval's lambda.
+  - id: led_attention_group
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+  # True while led_attention_pulse is actively animating. The
+  # 100ms breathing interval below checks this and skips writing
+  # to whichever group is mid-pulse, since ESPHome's delay() inside
+  # a script still lets other components (like this interval) run
+  # -- without this flag, the two would fight over the same LEDs
+  # every 100ms for the ~1s duration of the pulse.
+  - id: attention_pulse_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # Per-LED blink state machine (router-activity style, now driven
+  # by named per-band BEHAVIORS + per-LED ROLES rather than a single
+  # continuous rate/brightness formula). See the big comment block
+  # above the interval below for the full design.
+  - id: led_blink_countdown_1
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_2
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_3
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_4
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_5
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_6
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_7
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_blink_countdown_8
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # How many blinks remain in the LED's current burst (e.g. a
+  # "double-blink" schedules 2 here, a "triple-blink" schedules 3).
+  # Distinct from blink_hold (how long the CURRENT flash stays lit)
+  # and from countdown (gap before the NEXT blink/burst starts).
+  - id: led_burst_remaining_1
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_2
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_3
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_4
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_5
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_6
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_7
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: led_burst_remaining_8
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+# ============================================================
+# --- Ambient LED activity: named per-band behaviors + per-LED roles ---
+#
+# Replaces the old single continuous "rate/brightness scaled by
+# 0.0-1.0 sensor value" formula. That formula could only ever make
+# things faster/brighter -- it couldn't make CALM look qualitatively
+# DIFFERENT from HIGH, and every LED in a group ran the identical
+# algorithm, so a 3-LED group just looked like 3 copies of noise.
+#
+# Two ideas layered together instead:
+#
+# 1. NAMED BEHAVIORS PER BAND -- each sensor's current band (0/1/2,
+#    from co2_band/voc_band/pm_band, set by on_value_range elsewhere
+#    in this file) selects a distinct blink CHARACTER, not just a
+#    faster number:
+#      Band 0 (calm)     -> STEADY_IDLE:  single blinks, evenly
+#                           spaced, low brightness. Reads as "ticking
+#                           over normally."
+#      Band 1 (elevated) -> RESTLESS:     blinks come in short
+#                           irregular bursts (2 quick blinks, pause),
+#                           medium brightness. Reads as "a bit busy."
+#      Band 2 (high)      -> GLITCHING:    genuinely irregular --
+#                           burst length varies 1-3, timing is jumpy,
+#                           occasional much-longer "stuck on" flash.
+#                           Reads as "struggling," not just "fast."
+#
+# 2. PER-LED ROLES WITHIN A GROUP -- the 3 LEDs in a group (or 2 for
+#    PM) are no longer identical. Position within the group array
+#    determines role:
+#      Role A (anchor)  -- first LED in group. Always follows the
+#                          group's current band-behavior exactly.
+#                          This is the clearest signal of the three.
+#      Role B (echo)    -- second LED. Follows the SAME behavior as
+#                          the anchor, but offset: it starts its
+#                          countdown a bit staggered, so it reads as
+#                          a delayed reflection rather than a
+#                          synchronized twin.
+#      Role C (wildcard)-- third LED (CO2/VOC only, PM has no third).
+#                          Mostly follows the group's behavior too,
+#                          but has a small per-check chance to
+#                          borrow the NEXT band's behavior instead
+#                          (e.g. blink in the RESTLESS style even
+#                          while its group is calm). This is the
+#                          actual glitch-injection point -- rare
+#                          deviation reads as more interesting than
+#                          a constant property of the whole array.
+#
+# LED groups unchanged: 1-3=CO2 (anchor,echo,wildcard),
+# 4-6=VOC (anchor,echo,wildcard), 7-8=PM2.5 (anchor,echo only).
+# ============================================================
+interval:
+  - interval: 4s
+    then:
+      - lambda: |-
+          // Still used for floor brightness (continuous is fine
+          // there -- floor is meant to be a smooth backdrop, not
+          // part of the behavior/character system above).
+          float co2 = id(ha_co2).state;
+          float co2_t = (co2 - 400.0) / (1400.0 - 400.0);
+          if (co2_t < 0.0) co2_t = 0.0;
+          if (co2_t > 1.0) co2_t = 1.0;
+          id(co2_breath_target) = co2_t;
+
+          float voc = id(ha_voc).state;
+          float voc_t = voc / 400.0;
+          if (voc_t < 0.0) voc_t = 0.0;
+          if (voc_t > 1.0) voc_t = 1.0;
+          id(voc_breath_target) = voc_t;
+
+          float pm = id(ha_pm).state;
+          float pm_t = pm / 35.0;
+          if (pm_t < 0.0) pm_t = 0.0;
+          if (pm_t > 1.0) pm_t = 1.0;
+          id(pm_breath_target) = pm_t;
+
+  - interval: 50ms
+    then:
+      - lambda: |-
+          // ---- Floor brightness (unchanged: smooth, continuous) ----
+          float co2_floor = 0.02f + id(co2_breath_target) * 0.16f;
+          float voc_floor = 0.02f + id(voc_breath_target) * 0.16f;
+          float pm_floor  = 0.02f + id(pm_breath_target)  * 0.16f;
+
+          bool pulsing = id(attention_pulse_active);
+          int pulse_group = id(led_attention_group);
+
+          // ---- Per-LED state (persists across ticks) ----
+          static bool blink_on[8]       = {false,false,false,false,false,false,false,false};
+          static int  blink_hold[8]     = {0,0,0,0,0,0,0,0}; // ticks left in current flash
+          static bool initialized_stagger = false;
+
+          int countdown[8] = {
+            id(led_blink_countdown_1), id(led_blink_countdown_2), id(led_blink_countdown_3),
+            id(led_blink_countdown_4), id(led_blink_countdown_5), id(led_blink_countdown_6),
+            id(led_blink_countdown_7), id(led_blink_countdown_8)
+          };
+          int burst_remaining[8] = {
+            id(led_burst_remaining_1), id(led_burst_remaining_2), id(led_burst_remaining_3),
+            id(led_burst_remaining_4), id(led_burst_remaining_5), id(led_burst_remaining_6),
+            id(led_burst_remaining_7), id(led_burst_remaining_8)
+          };
+
+          // Stagger the ECHO role's very first countdown on boot so
+          // it doesn't start in lockstep with its anchor -- after
+          // this one-time offset, natural randomness keeps them
+          // de-synced on their own.
+          if (!initialized_stagger) {
+            countdown[1] += 5;  // echo of CO2 group
+            countdown[4] += 5;  // echo of VOC group
+            countdown[7] += 5;  // echo of PM group (2-LED group's echo)
+            initialized_stagger = true;
+          }
+
+          // band per group: 0=calm/STEADY_IDLE, 1=elevated/RESTLESS,
+          // 2=high/GLITCHING
+          int band_for_led[8] = {
+            id(co2_band), id(co2_band), id(co2_band),
+            id(voc_band), id(voc_band), id(voc_band),
+            id(pm_band),  id(pm_band)
+          };
+          // role per LED index: 0=anchor, 1=echo, 2=wildcard
+          // (group boundaries: 0-2=CO2, 3-5=VOC, 6-7=PM -- PM has no
+          // wildcard slot since it's only 2 LEDs)
+          int role_for_led[8] = {0, 1, 2,  0, 1, 2,  0, 1};
+
+          float floor_val[8] = {
+            co2_floor, co2_floor, co2_floor,
+            voc_floor, voc_floor, voc_floor,
+            pm_floor,  pm_floor
+          };
+
+          for (int i = 0; i < 8; i++) {
+            int band = band_for_led[i];
+            int role = role_for_led[i];
+
+            // WILDCARD deviation: small chance per tick that this LED
+            // borrows the NEXT band up's behavior instead of its
+            // group's actual band. Only applies to role 2 (wildcard),
+            // and only while it's between blinks (not mid-flash) so
+            // it doesn't cut off an in-progress flash.
+            int effective_band = band;
+            if (role == 2 && blink_hold[i] == 0 && countdown[i] <= 0) {
+              if ((random_uint32() % 100) < 8 && band < 2) {
+                effective_band = band + 1;
+              }
+            }
+
+            if (blink_hold[i] > 0) {
+              blink_hold[i]--;
+              if (blink_hold[i] == 0) {
+                blink_on[i] = false;
+                // If more blinks remain in this burst, schedule a
+                // short inter-blink gap rather than the full
+                // between-burst countdown.
+                if (burst_remaining[i] > 0) {
+                  countdown[i] = 3 + (random_uint32() % 3); // 150-250ms gap within a burst
+                }
+              }
+            } else if (countdown[i] > 0) {
+              countdown[i]--;
+            } else {
+              if (burst_remaining[i] > 0) {
+                // continue an in-progress burst
+                blink_on[i] = true;
+                burst_remaining[i]--;
+                if (effective_band == 2) {
+                  // GLITCHING: hold length itself is irregular, and
+                  // occasionally much longer ("stuck on" flicker)
+                  if ((random_uint32() % 100) < 15) {
+                    blink_hold[i] = 6 + (random_uint32() % 6); // 300-550ms "stuck" flash
+                  } else {
+                    blink_hold[i] = 1 + (random_uint32() % 4); // 50-200ms
+                  }
+                } else {
+                  blink_hold[i] = 2 + (random_uint32() % 3);   // 100-250ms
+                }
+              } else {
+                // start a NEW burst -- burst length depends on band
+                blink_on[i] = true;
+                if (effective_band == 0) {
+                  burst_remaining[i] = 0;                        // single blink only
+                  blink_hold[i] = 2 + (random_uint32() % 2);     // 100-150ms, crisp
+                } else if (effective_band == 1) {
+                  burst_remaining[i] = 1;                        // one MORE after this = double-blink
+                  blink_hold[i] = 2 + (random_uint32() % 3);     // 100-250ms
+                } else {
+                  burst_remaining[i] = (int)(random_uint32() % 3); // 0-2 more = 1-3 total, irregular
+                  blink_hold[i] = 1 + (random_uint32() % 5);       // 50-250ms, jumpy
+                }
+
+                // Gap until the NEXT burst starts (after this whole
+                // burst finishes) -- STEADY_IDLE is evenly spaced and
+                // slow, RESTLESS is medium with more variance,
+                // GLITCHING is fast and very irregular. This is what
+                // makes the three bands look qualitatively different,
+                // not just numerically faster.
+                int base_gap, jitter;
+                if (effective_band == 0)      { base_gap = 24; jitter = 6;  } // ~1.2-1.5s, steady
+                else if (effective_band == 1) { base_gap = 10; jitter = 12; } // ~0.5-1.1s, uneven
+                else                          { base_gap = 3;  jitter = 14; } // ~0.15-0.85s, jumpy
+
+                // ECHO role gets a small fixed offset added on top so
+                // it consistently trails its anchor rather than
+                // drifting in and out of sync randomly.
+                int echo_offset = (role == 1) ? 4 : 0;
+
+                countdown[i] = base_gap + echo_offset + (random_uint32() % (jitter + 1));
+              }
+            }
+          }
+
+          id(led_blink_countdown_1) = countdown[0];
+          id(led_blink_countdown_2) = countdown[1];
+          id(led_blink_countdown_3) = countdown[2];
+          id(led_blink_countdown_4) = countdown[3];
+          id(led_blink_countdown_5) = countdown[4];
+          id(led_blink_countdown_6) = countdown[5];
+          id(led_blink_countdown_7) = countdown[6];
+          id(led_blink_countdown_8) = countdown[7];
+
+          id(led_burst_remaining_1) = burst_remaining[0];
+          id(led_burst_remaining_2) = burst_remaining[1];
+          id(led_burst_remaining_3) = burst_remaining[2];
+          id(led_burst_remaining_4) = burst_remaining[3];
+          id(led_burst_remaining_5) = burst_remaining[4];
+          id(led_burst_remaining_6) = burst_remaining[5];
+          id(led_burst_remaining_7) = burst_remaining[6];
+          id(led_burst_remaining_8) = burst_remaining[7];
+
+          // ---- Brightness: band-scaled, dimmed per earlier feedback ----
+          float out[8];
+          for (int i = 0; i < 8; i++) {
+            if (blink_on[i]) {
+              float band_brightness = 0.20f + band_for_led[i] * 0.20f; // band 0=0.20, 1=0.40, 2=0.60
+              out[i] = band_brightness;
+            } else {
+              out[i] = floor_val[i];
+            }
+          }
+
+          if (!(pulsing && pulse_group == 0)) {
+            id(led_1_out).set_level(out[0]);
+            id(led_2_out).set_level(out[1]);
+            id(led_3_out).set_level(out[2]);
+          }
+          if (!(pulsing && pulse_group == 1)) {
+            id(led_4_out).set_level(out[3]);
+            id(led_5_out).set_level(out[4]);
+            id(led_6_out).set_level(out[5]);
+          }
+          if (!(pulsing && pulse_group == 2)) {
+            id(led_7_out).set_level(out[6]);
+            id(led_8_out).set_level(out[7]);
+          }
+
+  # ============================================================
+  # --- Restlessness layer 3: group attention-pulse ---
+  # Every ~8s, small chance (~20%) that one sensor group (CO2/
+  # VOC/PM) briefly brightens together as a deliberate "look at
+  # me" pulse, independent of that sensor's actual current value.
+  # This runs as its own script (led_attention_pulse) so it can
+  # hold a brief animated sequence without fighting the interval
+  # above -- it briefly overrides its group's LEDs directly, and
+  # normal blinking resumes right after since attention_pulse_active
+  # is what gates the interval's writes to that group.
+  # ============================================================
+  - interval: 8s
+    then:
+      - lambda: |-
+          if ((random_uint32() % 100) < 20) {
+            id(led_attention_group) = random_uint32() % 3;  // 0=CO2,1=VOC,2=PM
+          } else {
+            id(led_attention_group) = -1;  // no pulse this cycle
+          }
+      - if:
+          condition:
+            lambda: 'return id(led_attention_group) >= 0;'
+          then:
+            - script.execute: led_attention_pulse
+
+# NOTE: this interval now owns ALL 8 LEDs continuously (writes
+# every 100ms). Every older manual test button that targets a
+# specific led_N_out directly ("LED - Flicker 1/2", "LED - Strobe
+# 1", "LED - Alternating Stutter", "LED - Dropout Fade 1") will
+# have its effect overwritten within ~100ms, since this loop keeps
+# re-asserting the ambient breathing value on every LED. The
+# led_array_* scripts (scatter/chase/stutter) still work as brief
+# visible spikes on top of this, since they run for well under a
+# second and the ambient loop simply resumes after. If you want
+# the old single-LED test buttons to work standalone again,
+# temporarily comment out this 100ms interval while testing them.
+
+  # ============================================================
+  # --- Ambient sound pulse (unconditional, not gated) ---
+  # A single quiet tick on a random buzzer, at a low probability
+  # per check, so the piece never goes fully silent even with no
+  # motion and calm sensor readings. Checked every 8s (was 20s),
+  # ~35% chance per check (was 25%) -> averages roughly one soft
+  # tick per 20-25s now, noticeably more present than before.
+  # ============================================================
+  - interval: 8s
+    then:
+      - lambda: |-
+          if ((random_uint32() % 100) < 35) {
+            int which = random_uint32() % 3;
+            int freq = 300 + (random_uint32() % 400);
+            if (which == 0) {
+              id(buzzer_1_out).update_frequency(freq);
+              id(buzzer_1_out).set_level(0.15);
+            } else if (which == 1) {
+              id(buzzer_2_out).update_frequency(freq);
+              id(buzzer_2_out).set_level(0.15);
+            } else {
+              id(buzzer_3_out).update_frequency(freq);
+              id(buzzer_3_out).set_level(0.15);
+            }
+            delay(120);
+            id(buzzer_1_out).set_level(0.0);
+            id(buzzer_2_out).set_level(0.0);
+            id(buzzer_3_out).set_level(0.0);
+          }
+
+  # ============================================================
+  # --- Periodic re-trigger (sound reflects sensor state, all bands) ---
+  # Checks every 25s and, for EVERY sensor regardless of band, has
+  # a chance to fire a short reminder tick on THAT SENSOR'S OWN
+  # buzzer (1=CO2, 2=VOC, 3=PM) -- band 0 (calm) now included, not
+  # just 1/2 (elevated/high). Calm still sounds, just quieter,
+  # shorter, and sparser than elevated/high -- this is the fix for
+  # sound feeling occasional/unintuitive in a room that's usually
+  # calm: previously calm meant totally silent from this layer,
+  # which is most of the time for a typical room.
+  # CO2 is exempt from the room_awake gate (as elsewhere in this
+  # file); VOC and PM re-triggers still respect it.
+  # ============================================================
+  - interval: 25s
+    then:
+      - lambda: |-
+          int co2b = id(co2_band);
+          int vocb = id(voc_band);
+          int pmb  = id(pm_band);
+          bool awake = id(room_awake);
+
+          // CO2 -> buzzer 1, not gated by room_awake
+          if (co2b == 0 && (random_uint32() % 100) < 20) {
+            id(buzzer_1_out).update_frequency(420);
+            id(buzzer_1_out).set_level(0.12);
+            delay(90);
+            id(buzzer_1_out).set_level(0.0);
+          } else if (co2b == 1 && (random_uint32() % 100) < 30) {
+            id(buzzer_1_out).update_frequency(500);
+            id(buzzer_1_out).set_level(0.25);
+            delay(150);
+            id(buzzer_1_out).set_level(0.0);
+          } else if (co2b == 2 && (random_uint32() % 100) < 55) {
+            id(buzzer_1_out).update_frequency(650);
+            id(buzzer_1_out).set_level(0.4);
+            delay(90); id(buzzer_1_out).set_level(0.0); delay(60);
+            id(buzzer_1_out).set_level(0.4);
+            delay(90); id(buzzer_1_out).set_level(0.0);
+          }
+
+          // VOC -> buzzer 2, gated by room_awake
+          if (awake && vocb == 0 && (random_uint32() % 100) < 20) {
+            id(buzzer_2_out).update_frequency(620);
+            id(buzzer_2_out).set_level(0.12);
+            delay(90);
+            id(buzzer_2_out).set_level(0.0);
+          } else if (awake && vocb == 1 && (random_uint32() % 100) < 30) {
+            id(buzzer_2_out).update_frequency(700);
+            id(buzzer_2_out).set_level(0.25);
+            delay(150);
+            id(buzzer_2_out).set_level(0.0);
+          } else if (awake && vocb == 2 && (random_uint32() % 100) < 55) {
+            int f = 400 + (random_uint32() % 800);
+            id(buzzer_2_out).update_frequency(f);
+            id(buzzer_2_out).set_level(0.45);
+            delay(70); id(buzzer_2_out).set_level(0.0); delay(40);
+            f = 400 + (random_uint32() % 800);
+            id(buzzer_2_out).update_frequency(f);
+            id(buzzer_2_out).set_level(0.45);
+            delay(70); id(buzzer_2_out).set_level(0.0);
+          }
+
+          // PM2.5 -> buzzer 3, gated by room_awake
+          if (awake && pmb == 0 && (random_uint32() % 100) < 20) {
+            id(buzzer_3_out).update_frequency(280);
+            id(buzzer_3_out).set_level(0.12);
+            delay(110);
+            id(buzzer_3_out).set_level(0.0);
+          } else if (awake && pmb == 1 && (random_uint32() % 100) < 30) {
+            id(buzzer_3_out).update_frequency(350);
+            id(buzzer_3_out).set_level(0.25);
+            delay(200);
+            id(buzzer_3_out).set_level(0.0);
+          } else if (awake && pmb == 2 && (random_uint32() % 100) < 55) {
+            id(buzzer_3_out).update_frequency(300);
+            id(buzzer_3_out).set_level(0.4);
+            delay(300);
+            id(buzzer_3_out).set_level(0.0);
+          }
+
+
+# ============================================================
+# --- PWM outputs, one per passive buzzer ---
+# Each buzzer sits between its GPIO and GND, driven through an
+# NPN transistor stage (base <- GPIO via base resistor, buzzer
+# in the collector path) so the PWM waveform passes through to
+# the buzzer rather than just switching it fully on/off.
+# min_power/zero_means_zero added to opt in to runtime power
+# scaling cleanly (avoids a static_assert build failure some
+# ESPHome versions raise if set_level() is used from a lambda
+# without any output declaring min_power/max_power).
+# ============================================================
+output:
+  - platform: ledc
+    pin: GPIO25
+    id: buzzer_1_out
+    frequency: 1000Hz
+    min_power: 0%
+
+  - platform: ledc
+    pin: GPIO26
+    id: buzzer_2_out
+    frequency: 1000Hz
+    min_power: 0%
+
+  - platform: ledc
+    pin: GPIO27
+    id: buzzer_3_out
+    frequency: 1000Hz
+    min_power: 0%
+
+# ============================================================
+# --- LED outputs, direct GPIO, PWM-dimmable ---
+# Same LEDC approach as the buzzers, just driving LEDs instead
+# of a transistor-switched buzzer. Each LED needs its own
+# current-limiting resistor (~220-330ohm) in series, wired
+# GPIO -> resistor -> LED anode, LED cathode -> GND.
+# All 8 wired: LED1=GPIO18, LED2=GPIO19, LED3=GPIO4, LED4=GPIO5,
+# LED5=GPIO13, LED6=GPIO16, LED7=GPIO17, LED8=GPIO14.
+# ============================================================
+  - platform: ledc
+    pin: GPIO18
+    id: led_1_out
+
+  - platform: ledc
+    pin: GPIO19
+    id: led_2_out
+
+  - platform: ledc
+    pin: GPIO4
+    id: led_3_out
+
+  - platform: ledc
+    pin: GPIO5
+    id: led_4_out
+
+  - platform: ledc
+    pin: GPIO13
+    id: led_5_out
+
+  - platform: ledc
+    pin: GPIO16
+    id: led_6_out
+
+  - platform: ledc
+    pin: GPIO17
+    id: led_7_out
+
+  - platform: ledc
+    pin: GPIO14
+    id: led_8_out
+
+# ============================================================
+# --- LED light entities ---
+# Exposes each LED to Home Assistant as an individually
+# dimmable light, so you can test on/off/brightness from the
+# HA dashboard immediately, independent of the glitch scripts
+# below. The glitch scripts use the underlying `output` directly
+# (via id()), which works fine alongside the light entity --
+# ESPHome doesn't mind both touching the same output. Note: HA's
+# brightness slider may not visually track script-driven changes
+# made via set_level() directly -- cosmetic only, see README.
+# ============================================================
+light:
+  - platform: monochromatic
+    output: led_1_out
+    id: led_1
+    name: "LED 1"
+
+  - platform: monochromatic
+    output: led_2_out
+    id: led_2
+    name: "LED 2"
+
+  - platform: monochromatic
+    output: led_3_out
+    id: led_3
+    name: "LED 3"
+
+  - platform: monochromatic
+    output: led_4_out
+    id: led_4
+    name: "LED 4"
+
+  - platform: monochromatic
+    output: led_5_out
+    id: led_5
+    name: "LED 5"
+
+  - platform: monochromatic
+    output: led_6_out
+    id: led_6
+    name: "LED 6"
+
+  - platform: monochromatic
+    output: led_7_out
+    id: led_7
+    name: "LED 7"
+
+  - platform: monochromatic
+    output: led_8_out
+    id: led_8
+    name: "LED 8"
+
+# ============================================================
+# --- Glitch sound scripts ---
+# Each buzzer gets its OWN copy of each glitch type (rather than
+# one parameterized script branching on an id string) since
+# ESPHome lambdas need id(...) resolved at compile time, not
+# passed as a runtime string. Slightly more repetition in this
+# file, but avoids fragile string-branching in C++.
+# ============================================================
+script:
+
+  # --- Motion "awake" timeout: resets every time motion re-fires, ---
+  # so continuous presence keeps the room awake indefinitely, and ---
+  # only sustained ABSENCE of motion for the full delay puts it ---
+  # back to sleep. Triggered from binary_sensor.ha_motion below. ---
+  - id: motion_awake_timeout_reset
+    mode: restart    # a fresh motion event cancels/replaces any
+                      # timeout already in progress, rather than
+                      # stacking multiple pending sleep timers
+    then:
+      - delay: 7min
+      - globals.set:
+          id: room_awake
+          value: 'false'
+      - logger.log: "Room went dormant (no motion for 7min)"
+
+  # --- Attention pulse: one sensor group briefly brightens ---
+  # together, independent of that sensor's actual value -- a
+  # deliberate "look at me" flourish rather than a data readout.
+  # Triggered by the 8s interval above, which picks the group and
+  # sets led_attention_group before calling this. Uses a gentle
+  # ramp up/down (not a hard snap) so it reads as a considered
+  # gesture rather than another glitch-category flash -- this is
+  # meant to feel different from led_array_scatter/chase/stutter.
+  - id: led_attention_pulse
+    then:
+      - globals.set:
+          id: attention_pulse_active
+          value: 'true'
+      - lambda: |-
+          int group = id(led_attention_group);
+          // ramp up
+          for (float lvl = 0.0; lvl <= 0.55; lvl += 0.05) {
+            if (group == 0) {
+              id(led_1_out).set_level(lvl);
+              id(led_2_out).set_level(lvl);
+              id(led_3_out).set_level(lvl);
+            } else if (group == 1) {
+              id(led_4_out).set_level(lvl);
+              id(led_5_out).set_level(lvl);
+              id(led_6_out).set_level(lvl);
+            } else if (group == 2) {
+              id(led_7_out).set_level(lvl);
+              id(led_8_out).set_level(lvl);
+            }
+            delay(35);
+          }
+          delay(150);
+          // ramp back down -- the 100ms breathing interval resumes
+          // writing to this group as soon as attention_pulse_active
+          // is cleared below
+          for (float lvl = 0.55; lvl >= 0.0; lvl -= 0.05) {
+            if (group == 0) {
+              id(led_1_out).set_level(lvl);
+              id(led_2_out).set_level(lvl);
+              id(led_3_out).set_level(lvl);
+            } else if (group == 1) {
+              id(led_4_out).set_level(lvl);
+              id(led_5_out).set_level(lvl);
+              id(led_6_out).set_level(lvl);
+            } else if (group == 2) {
+              id(led_7_out).set_level(lvl);
+              id(led_8_out).set_level(lvl);
+            }
+            delay(35);
+          }
+      - globals.set:
+          id: attention_pulse_active
+          value: 'false'
+
+  # --- Stutter: rapid on/off at a fixed pitch, uneven timing ---
+  - id: glitch_stutter_1
+    then:
+      - lambda: |-
+          id(buzzer_1_out).update_frequency(600);
+          for (int i = 0; i < 8; i++) {
+            id(buzzer_1_out).set_level(0.5);
+            delay(random_uint32() % 40 + 10);
+            id(buzzer_1_out).set_level(0.0);
+            delay(random_uint32() % 60 + 5);
+          }
+
+  - id: glitch_stutter_2
+    then:
+      - lambda: |-
+          id(buzzer_2_out).update_frequency(600);
+          for (int i = 0; i < 8; i++) {
+            id(buzzer_2_out).set_level(0.5);
+            delay(random_uint32() % 40 + 10);
+            id(buzzer_2_out).set_level(0.0);
+            delay(random_uint32() % 60 + 5);
+          }
+
+  - id: glitch_stutter_3
+    then:
+      - lambda: |-
+          id(buzzer_3_out).update_frequency(600);
+          for (int i = 0; i < 8; i++) {
+            id(buzzer_3_out).set_level(0.5);
+            delay(random_uint32() % 40 + 10);
+            id(buzzer_3_out).set_level(0.0);
+            delay(random_uint32() % 60 + 5);
+          }
+
+  # --- Frequency jump: fast random pitch jumps, "corrupted signal" ---
+  - id: glitch_freq_jump_1
+    then:
+      - lambda: |-
+          id(buzzer_1_out).set_level(0.5);
+          for (int i = 0; i < 12; i++) {
+            int freq = 200 + (random_uint32() % 3000);
+            id(buzzer_1_out).update_frequency(freq);
+            delay(random_uint32() % 35 + 15);
+          }
+          id(buzzer_1_out).set_level(0.0);
+
+  - id: glitch_freq_jump_2
+    then:
+      - lambda: |-
+          id(buzzer_2_out).set_level(0.5);
+          for (int i = 0; i < 12; i++) {
+            int freq = 200 + (random_uint32() % 3000);
+            id(buzzer_2_out).update_frequency(freq);
+            delay(random_uint32() % 35 + 15);
+          }
+          id(buzzer_2_out).set_level(0.0);
+
+  - id: glitch_freq_jump_3
+    then:
+      - lambda: |-
+          id(buzzer_3_out).set_level(0.5);
+          for (int i = 0; i < 12; i++) {
+            int freq = 200 + (random_uint32() % 3000);
+            id(buzzer_3_out).update_frequency(freq);
+            delay(random_uint32() % 35 + 15);
+          }
+          id(buzzer_3_out).set_level(0.0);
+
+  # --- Bit-crush style ramp: coarse stepped frequencies, ---
+  # quantized/mechanical rather than a smooth sweep ---
+  - id: glitch_bitcrush_ramp_1
+    parameters:
+      ascending: bool
+    then:
+      - lambda: |-
+          int steps[] = {220, 330, 440, 550, 660, 880};
+          int n = 6;
+          id(buzzer_1_out).set_level(0.4);
+          for (int i = 0; i < n; i++) {
+            int idx = ascending ? i : (n - 1 - i);
+            id(buzzer_1_out).update_frequency(steps[idx]);
+            delay(90);
+          }
+          id(buzzer_1_out).set_level(0.0);
+
+  - id: glitch_bitcrush_ramp_2
+    parameters:
+      ascending: bool
+    then:
+      - lambda: |-
+          int steps[] = {220, 330, 440, 550, 660, 880};
+          int n = 6;
+          id(buzzer_2_out).set_level(0.4);
+          for (int i = 0; i < n; i++) {
+            int idx = ascending ? i : (n - 1 - i);
+            id(buzzer_2_out).update_frequency(steps[idx]);
+            delay(90);
+          }
+          id(buzzer_2_out).set_level(0.0);
+
+  - id: glitch_bitcrush_ramp_3
+    parameters:
+      ascending: bool
+    then:
+      - lambda: |-
+          int steps[] = {220, 330, 440, 550, 660, 880};
+          int n = 6;
+          id(buzzer_3_out).set_level(0.4);
+          for (int i = 0; i < n; i++) {
+            int idx = ascending ? i : (n - 1 - i);
+            id(buzzer_3_out).update_frequency(steps[idx]);
+            delay(90);
+          }
+          id(buzzer_3_out).set_level(0.0);
+
+  # --- Dropout: sustained tone with random silent gaps, ---
+  # simulates a failing/intermittent connection ---
+  - id: glitch_dropout_1
+    parameters:
+      base_freq: int
+      duration_ms: int
+    then:
+      - lambda: |-
+          id(buzzer_1_out).update_frequency(base_freq);
+          int elapsed = 0;
+          while (elapsed < duration_ms) {
+            bool dropout = (random_uint32() % 100) < 15;
+            id(buzzer_1_out).set_level(dropout ? 0.0 : 0.5);
+            int step = random_uint32() % 80 + 40;
+            delay(step);
+            elapsed += step;
+          }
+          id(buzzer_1_out).set_level(0.0);
+
+  # --- Three-buzzer cluster glitch: all three at once, ---
+  # slightly offset timing and different frequency ranges, ---
+  # so they don't sound synchronized/robotic together ---
+  - id: glitch_cluster_all
+    then:
+      - lambda: |-
+          id(buzzer_1_out).update_frequency(300 + (random_uint32() % 800));
+          id(buzzer_1_out).set_level(0.4);
+      - delay: 20ms
+      - lambda: |-
+          id(buzzer_2_out).update_frequency(500 + (random_uint32() % 1200));
+          id(buzzer_2_out).set_level(0.4);
+      - delay: 35ms
+      - lambda: |-
+          id(buzzer_3_out).update_frequency(200 + (random_uint32() % 600));
+          id(buzzer_3_out).set_level(0.4);
+      - delay: 180ms
+      - lambda: |-
+          id(buzzer_1_out).set_level(0.0);
+          id(buzzer_2_out).set_level(0.0);
+          id(buzzer_3_out).set_level(0.0);
+
+# ============================================================
+# --- LED glitch scripts ---
+# Mirror the buzzer glitch vocabulary (stutter, flicker,
+# dropout) so light and sound can eventually be triggered
+# together for the same "glitch event" once sensor logic
+# drives both. For now these are standalone/testable on their
+# own via the buttons below.
+# ============================================================
+
+  # --- Flicker: rapid uneven on/off, like a bad connection ---
+  - id: led_flicker_1
+    then:
+      - lambda: |-
+          for (int i = 0; i < 10; i++) {
+            id(led_1_out).set_level(1.0);
+            delay(random_uint32() % 30 + 10);
+            id(led_1_out).set_level(0.0);
+            delay(random_uint32() % 50 + 5);
+          }
+
+  - id: led_flicker_2
+    then:
+      - lambda: |-
+          for (int i = 0; i < 10; i++) {
+            id(led_2_out).set_level(1.0);
+            delay(random_uint32() % 30 + 10);
+            id(led_2_out).set_level(0.0);
+            delay(random_uint32() % 50 + 5);
+          }
+
+  # --- Strobe: fast, even, mechanical blink burst ---
+  - id: led_strobe_1
+    then:
+      - lambda: |-
+          for (int i = 0; i < 6; i++) {
+            id(led_1_out).set_level(1.0);
+            delay(40);
+            id(led_1_out).set_level(0.0);
+            delay(40);
+          }
+
+  # --- Alternating stutter: the two LEDs trade off unevenly, ---
+  # reads as a "conversation" or corrupted handoff between them ---
+  - id: led_alternate_stutter
+    then:
+      - lambda: |-
+          for (int i = 0; i < 8; i++) {
+            id(led_1_out).set_level(1.0);
+            id(led_2_out).set_level(0.0);
+            delay(random_uint32() % 60 + 20);
+            id(led_1_out).set_level(0.0);
+            id(led_2_out).set_level(1.0);
+            delay(random_uint32() % 60 + 20);
+          }
+          id(led_1_out).set_level(0.0);
+          id(led_2_out).set_level(0.0);
+
+  # --- Dropout fade: slow fade up, sudden cut, like the flicker's ---
+  # slower/moodier cousin -- good for a "fatigued" state feel ---
+  - id: led_dropout_fade_1
+    then:
+      - lambda: |-
+          for (float level = 0.0; level <= 1.0; level += 0.1) {
+            id(led_1_out).set_level(level);
+            delay(60);
+          }
+          delay(200);
+          id(led_1_out).set_level(0.0);
+
+  # ============================================================
+  # --- Array-wide scripts (all 8 LEDs) ---
+  # Treat the LEDs as a field rather than repeating per-LED
+  # scripts eight times. Uses a small helper pattern (pick a
+  # random index, dispatch via if-chain to the matching named
+  # output) rather than building a C array of id() pointers --
+  # keeps every line using the same id(name).set_level() form
+  # already confirmed working elsewhere in this file, instead
+  # of relying on untested pointer-array syntax.
+  #
+  # KNOWN LIMITATION: unlike led_attention_pulse (which sets
+  # attention_pulse_active so the 100ms breathing interval yields
+  # to it), these three scripts do NOT suppress the breathing
+  # interval while they run. Since ESPHome's delay() inside a
+  # script still lets other components run, the 100ms breathing
+  # loop keeps re-asserting its own values during these scripts'
+  # brief runtime (roughly 0.3-1s depending on the script), so
+  # there's some flicker/fighting between the two on the affected
+  # LEDs for that short window. In practice this is subtle since
+  # both durations are short and the scripts write LEDs to 0.8-1.0
+  # (well above breathing's 0.08-0.65 range), so the glitch mostly
+  # still reads correctly -- but if you want it fully clean, apply
+  # the same active-flag pattern used in led_attention_pulse to
+  # these three scripts too.
+  # ============================================================
+
+  # --- Random scatter flicker: 1-3 random LEDs flash per pulse, ---
+  # avoids the "all LEDs blink together" look which reads as ---
+  # uniform/mechanical rather than glitchy ---
+  - id: led_array_scatter
+    then:
+      - lambda: |-
+          for (int pulse = 0; pulse < 10; pulse++) {
+            int count = (random_uint32() % 3) + 1;   // 1-3 LEDs per pulse
+            for (int i = 0; i < count; i++) {
+              int idx = random_uint32() % 8;
+              switch (idx) {
+                case 0: id(led_1_out).set_level(1.0); break;
+                case 1: id(led_2_out).set_level(1.0); break;
+                case 2: id(led_3_out).set_level(1.0); break;
+                case 3: id(led_4_out).set_level(1.0); break;
+                case 4: id(led_5_out).set_level(1.0); break;
+                case 5: id(led_6_out).set_level(1.0); break;
+                case 6: id(led_7_out).set_level(1.0); break;
+                case 7: id(led_8_out).set_level(1.0); break;
+              }
+            }
+            delay(random_uint32() % 50 + 20);
+            id(led_1_out).set_level(0.0);
+            id(led_2_out).set_level(0.0);
+            id(led_3_out).set_level(0.0);
+            id(led_4_out).set_level(0.0);
+            id(led_5_out).set_level(0.0);
+            id(led_6_out).set_level(0.0);
+            id(led_7_out).set_level(0.0);
+            id(led_8_out).set_level(0.0);
+            delay(random_uint32() % 60 + 10);
+          }
+
+  # --- Chase: lights sweep across the array in order, ---
+  # deliberate rather than random -- good for a "rare event" ---
+  # marker (e.g. a tune-fragment moment later), distinct from ---
+  # the chaotic scatter/flicker used for ordinary glitch events ---
+  - id: led_array_chase
+    parameters:
+      reverse: bool
+    then:
+      - lambda: |-
+          if (!reverse) {
+            id(led_1_out).set_level(1.0); delay(70); id(led_1_out).set_level(0.0);
+            id(led_2_out).set_level(1.0); delay(70); id(led_2_out).set_level(0.0);
+            id(led_3_out).set_level(1.0); delay(70); id(led_3_out).set_level(0.0);
+            id(led_4_out).set_level(1.0); delay(70); id(led_4_out).set_level(0.0);
+            id(led_5_out).set_level(1.0); delay(70); id(led_5_out).set_level(0.0);
+            id(led_6_out).set_level(1.0); delay(70); id(led_6_out).set_level(0.0);
+            id(led_7_out).set_level(1.0); delay(70); id(led_7_out).set_level(0.0);
+            id(led_8_out).set_level(1.0); delay(70); id(led_8_out).set_level(0.0);
+          } else {
+            id(led_8_out).set_level(1.0); delay(70); id(led_8_out).set_level(0.0);
+            id(led_7_out).set_level(1.0); delay(70); id(led_7_out).set_level(0.0);
+            id(led_6_out).set_level(1.0); delay(70); id(led_6_out).set_level(0.0);
+            id(led_5_out).set_level(1.0); delay(70); id(led_5_out).set_level(0.0);
+            id(led_4_out).set_level(1.0); delay(70); id(led_4_out).set_level(0.0);
+            id(led_3_out).set_level(1.0); delay(70); id(led_3_out).set_level(0.0);
+            id(led_2_out).set_level(1.0); delay(70); id(led_2_out).set_level(0.0);
+            id(led_1_out).set_level(1.0); delay(70); id(led_1_out).set_level(0.0);
+          }
+
+  # --- All-array stutter: entire array pulses together, ---
+  # uneven timing -- reserved for higher-intensity "agitated" ---
+  # moments, pairs well with glitch_cluster_all ---
+  - id: led_array_stutter
+    then:
+      - lambda: |-
+          for (int pulse = 0; pulse < 6; pulse++) {
+            id(led_1_out).set_level(0.8);
+            id(led_2_out).set_level(0.8);
+            id(led_3_out).set_level(0.8);
+            id(led_4_out).set_level(0.8);
+            id(led_5_out).set_level(0.8);
+            id(led_6_out).set_level(0.8);
+            id(led_7_out).set_level(0.8);
+            id(led_8_out).set_level(0.8);
+            delay(random_uint32() % 40 + 15);
+            id(led_1_out).set_level(0.0);
+            id(led_2_out).set_level(0.0);
+            id(led_3_out).set_level(0.0);
+            id(led_4_out).set_level(0.0);
+            id(led_5_out).set_level(0.0);
+            id(led_6_out).set_level(0.0);
+            id(led_7_out).set_level(0.0);
+            id(led_8_out).set_level(0.0);
+            delay(random_uint32() % 70 + 20);
+          }
