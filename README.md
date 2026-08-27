@@ -1,6 +1,6 @@
 # Glitchy
 
-*An ambient sound and light sculpture that lets a room sing its own air quality.*
+*An ambient sound and light device that lets a room sing its own air quality.*
 
 Glitchy is a small standalone device — an ESP32, three buzzers, eight
 LEDs, and a handful of environmental sensors — that turns CO₂, VOC,
