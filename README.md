@@ -9,8 +9,7 @@ numbers. It doesn't alarm. It sits in a room and, quietly, tells you how
 that room is doing, in the same way you can tell a fridge is running or a
 router is busy without reading a single figure.
 
-Built in the open as a FLOSSK project, first shown at Software Freedom
-Kosova (SFK) — an example of what creative, small-scale, unglamorous
+Built in the open as a FLOSSK project, an example of what creative, small-scale, unglamorous
 open-source hardware can do when the goal is expression rather than
 efficiency.
 
