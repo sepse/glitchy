@@ -184,15 +184,15 @@ no cloud dependency, no proprietary hub.
    fill in your WiFi credentials and a generated API encryption key
    (command included as a comment in the file). `secrets.yaml` is
    gitignored — never commit your real one.
-3. Update the `entity_id:` values in `firmware/sound-sculpture.yaml`
+3. Update the `entity_id:` values in `firmware/glitchy.yaml`
    to match your own Home Assistant sensor entities.
 4. Validate before flashing:
    ```
-   esphome config firmware/sound-sculpture.yaml
+   esphome config firmware/glitchy.yaml
    ```
 5. Flash over USB the first time:
    ```
-   esphome run firmware/sound-sculpture.yaml
+   esphome run firmware/glitchy.yaml
    ```
    Subsequent updates can go over OTA once it's on your network.
 
@@ -208,9 +208,8 @@ band thresholds against real logged data.
 
 ## Credits
 
-Built by [Bob](https://github.com/sepse) for
-[FLOSSK](https://flossk.org) — Free Libre Open Source Software Kosova —
-first shown at Software Freedom Kosova (SFK).
+Built by [sepse](https://github.com/sepse) for
+[FLOSSK](https://flossk.org)
 
 ## License
 
