@@ -1,17 +1,38 @@
 # Glitchy
 
-*An ambient sound and light device that lets a room sing its own air quality.*
+*An ambient sound and light sculpture that lets a room sing its own air quality.*
 
 Glitchy is a small standalone device — an ESP32, three buzzers, eight
-LEDs, and a handful of environmental sensors — that turns CO₂, VOC,
-particulate matter, and presence into sound and light. It doesn't display
-numbers. It doesn't alarm. It sits in a room and, quietly, tells you how
-that room is doing, in the same way you can tell a fridge is running or a
-router is busy without reading a single figure.
+LEDs — that turns CO₂, VOC, particulate matter, and presence into sound
+and light. It doesn't display numbers. It doesn't alarm. It sits in a
+room and, quietly, tells you how that room is doing, in the same way you
+can tell a fridge is running or a router is busy without reading a
+single figure.
 
-Built in the open as a FLOSSK project, an example of what creative, small-scale, unglamorous
+Built in the open as a FLOSSK project, first shown at Software Freedom
+Kosova (SFK) — an example of what creative, small-scale, unglamorous
 open-source hardware can do when the goal is expression rather than
 efficiency.
+
+## What you need
+
+This repo is firmware for the sensing/output device — it does **not**
+include sensor wiring or a home automation setup. Before this is useful
+to you, you need:
+
+- An **ESP32** (WROOM, classic — see [Hardware](#hardware) below)
+- A running **[Home Assistant](https://www.home-assistant.io)** instance
+  on the same network
+- **CO₂, VOC, PM2.5, and motion sensors already integrated into that
+  Home Assistant instance**, exposed as entities — via any integration
+  you like (another ESPHome device, a Zigbee/Z-Wave sensor, a
+  manufacturer's official integration, etc.)
+
+Glitchy pulls all sensor data from Home Assistant over its native API —
+it does not read any air-quality sensor directly, and this repo doesn't
+cover getting sensors into Home Assistant in the first place. If you
+don't have that yet, get your sensors showing up as entities in Home
+Assistant first, then come back here.
 
 ## Motivation
 
@@ -79,11 +100,12 @@ air-quality band (calm, elevated, high) its own distinct character:
   occasional "stuck" flickers. The room doesn't just get louder, it
   starts to sound like something under strain.
 
-That's the reasoning behind the glitch aesthetic specifically: corrupted,
-irregular, imperfect sound is a more honest metaphor for degraded air
-than a clean tone turned up louder would be. Bad air isn't "more" of a
-good thing — it's a system starting to misbehave, and the sound design
-tries to mirror that directly rather than just scaling a dial.
+That's the reasoning behind the glitch aesthetic specifically — and the
+project's name: corrupted, irregular, imperfect sound is a more honest
+metaphor for degraded air than a clean tone turned up louder would be.
+Bad air isn't "more" of a good thing — it's a system starting to
+misbehave, and the sound design tries to mirror that directly rather
+than just scaling a dial.
 
 **Even within one sensor's group, the LEDs aren't identical.** Each group
 of LEDs has roles — an anchor that always shows the sensor's true current
@@ -150,8 +172,7 @@ the sharper glitch events fired on a band *crossing*:
 
 (VOC and PM2.5 thresholds are starting points, tuned against common
 air-quality breakpoints rather than measured against these specific
-sensors — worth adjusting once you have some real logged data for your
-own space.)
+sensors — see [Limitations](#limitations--known-issues).)
 
 **Motion gate** — motion sets the room "awake" for 7 minutes and resets
 on renewed motion. CO₂'s ambient presence is never gated, since a room's
@@ -164,51 +185,119 @@ configuration, pulling sensor state from
 [Home Assistant](https://www.home-assistant.io) over its native API —
 no cloud dependency, no proprietary hub.
 
+See [`media/wiring-diagram.svg`](media/wiring-diagram.svg) for the full
+system diagram (buzzer/LED wiring, power, and where sensor data actually
+comes from).
+
 ## Hardware
 
-- ESP32 (WROOM, classic — no S3-specific features are used)
-- 3× passive piezo buzzers + NPN transistors (base resistor, buzzer in
-  the collector path) for PWM-driven tone switching
-- 8× single-color LEDs + current-limiting resistors (~220–330Ω each)
-- Environmental sensors reachable via Home Assistant (any CO₂/VOC/PM2.5/
-  motion sensor integration works — this build used an ESPHome-based
-  air-quality sensor and a separate presence sensor already exposed in
-  Home Assistant)
+Bill of materials, with the specific parts and values used in this
+build:
+
+| Part | Spec used here | Notes |
+|---|---|---|
+| Microcontroller | ESP32-WROOM (classic) dev board | No S3-specific features used — any classic ESP32-WROOM board should work |
+| Buzzers | 3× passive piezo buzzer | Passive, not active — needs a driven PWM tone, doesn't self-oscillate |
+| Transistors | 3× NPN, small-signal (e.g. 2N2222 or BC547) | One per buzzer, switching stage — see wiring diagram |
+| Base resistor | ~1kΩ | One per transistor, GPIO → base |
+| LEDs | 8× single-color, standard 5mm or similar | Direct GPIO drive, no driver chip |
+| LED resistor | 220–330Ω | One per LED, current-limiting |
+| Power | USB 5V into the ESP32-WROOM dev board | Onboard regulator provides 3.3V for the ESP32 itself |
+
+**Power draw**: not currently measured/logged for this build. The ESP32
+alone typically draws tens of mA at idle and up to ~200-300mA under WiFi
+transmit bursts; the buzzers and LEDs add a modest amount on top when
+active, but a bench measurement hasn't been done yet — see
+[Limitations](#limitations--known-issues). USB power (a standard 5V/1A+
+phone charger or a computer's USB port) has been sufficient in testing;
+battery operation has not been tried.
+
+## Repository layout
+
+```
+glitchy/
+├── README.md                       — this file
+├── LICENSE                         — MIT
+├── .gitignore                      — keeps your real secrets.yaml out of git
+├── firmware/
+│   ├── glitchy.yaml                — the full ESPHome configuration
+│   └── secrets.yaml.example        — placeholder credentials template
+└── media/
+    └── wiring-diagram.svg          — buzzer/LED wiring, power, and data flow
+```
 
 ## Getting started
 
-1. Install [ESPHome](https://esphome.io/guides/installing_esphome) (or
+1. Make sure your [prerequisites](#what-you-need) are in place first —
+   Home Assistant running, with CO₂/VOC/PM2.5/motion sensors already
+   showing up as entities.
+2. Install [ESPHome](https://esphome.io/guides/installing_esphome) (or
    use the Home Assistant ESPHome add-on).
-2. Copy `firmware/secrets.yaml.example` to `firmware/secrets.yaml` and
+3. Copy `firmware/secrets.yaml.example` to `firmware/secrets.yaml` and
    fill in your WiFi credentials and a generated API encryption key
    (command included as a comment in the file). `secrets.yaml` is
    gitignored — never commit your real one.
-3. Update the `entity_id:` values in `firmware/glitchy.yaml`
-   to match your own Home Assistant sensor entities.
-4. Validate before flashing:
+4. Update the `entity_id:` values in `firmware/glitchy.yaml` to match
+   your own Home Assistant sensor entities.
+5. Validate before flashing:
    ```
    esphome config firmware/glitchy.yaml
    ```
-5. Flash over USB the first time:
+6. Flash over USB the first time:
    ```
    esphome run firmware/glitchy.yaml
    ```
    Subsequent updates can go over OTA once it's on your network.
+
+## Limitations / known issues
+
+Honest accounting of what's not yet solid, rather than presenting this
+as a finished object:
+
+- **Piezo buzzer volume is modest.** Passive piezo buzzers driven
+  directly (even through a transistor stage) are not loud — audible
+  clearly at close/room range, but this is not a project that will fill
+  a large or noisy space with sound. A powered speaker is a planned
+  addition (see below), not yet built.
+- **VOC and PM2.5 thresholds are untuned.** The band edges in the table
+  above are reasonable starting guesses based on common air-quality
+  breakpoints, not measured against real data from these specific
+  sensors in a real room. CO₂'s thresholds are more solid (set
+  deliberately, not guessed) but still worth validating against your
+  own space.
+- **No enclosure yet.** This is bare electronics on a bench/breadboard
+  — there is no sculptural housing yet. A found-object metal enclosure
+  is planned but not built.
+- **No fourth, melodic voice.** A small speaker and amplifier for a
+  more musical/tonal layer (distinct from the three buzzers' glitch
+  character) was part of the original design intent and hasn't been
+  added yet.
+- **Ambient-layer tuning is by feel, not measurement.** The blink
+  timing, ambient sound frequency, and "wildcard" glitch probabilities
+  were tuned by ear/eye during development, not against any formal
+  metric — they're reasonable defaults, not validated optimal values.
+- **Power draw hasn't been benchmarked.** See the note under
+  [Hardware](#hardware) — no current-draw measurements have been taken,
+  and only USB power has been tested.
+- **Single ESP32, no redundancy.** If Home Assistant or the network is
+  unreachable, sensor-driven behavior stops until connectivity returns
+  (there's no local fallback/cached-state behavior).
 
 ## Project status
 
 This is a first working version: standalone operation, three-band
 sensor tracking, per-sensor buzzer identity, and a named-behavior /
 per-LED-role blink engine for the LEDs. Open directions from here
-include a small speaker and amplifier for a fourth, more melodic voice,
-a physical enclosure (found-object metal, partially exposing the
-electronics as the piece's "nervous system"), and tuning the VOC/PM2.5
-band thresholds against real logged data.
+include everything under [Limitations](#limitations--known-issues)
+above, plus a physical enclosure (found-object metal, partially
+exposing the electronics as the piece's "nervous system") once the
+electronics themselves settle down further.
 
 ## Credits
 
-Built by [sepse](https://github.com/sepse) for
-[FLOSSK](https://flossk.org)
+Built by [Bob](https://github.com/sepse) for
+[FLOSSK](https://flossk.org) — Free Libre Open Source Software Kosova —
+first shown at Software Freedom Kosova (SFK).
 
 ## License
 
