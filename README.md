@@ -50,7 +50,7 @@ through a change in mood, without demanding your attention or shouting
 for it either. Not a dashboard. Not an alarm. Something closer to a pet,
 or a very quiet appliance, that has its own way of being present.
 
-It's also, deliberately, a piece of *open-source* creative technology —
+It's also, deliberately, a piece of *open-source* creative technology,
 built with parts anyone can buy, running entirely on open tools (ESPHome,
 Home Assistant), documented openly, and meant to be forked, misread,
 rewired, and improved. FLOSSK exists to show that open-source work can be
@@ -132,7 +132,7 @@ than in the middle of it.
 
 Put together, the design goal was never "accurately display three sensor
 readings." It was: give a room a way to have a mood, communicated the way
-moods actually reach people — ambiently, asymmetrically, and only as
+moods actually reach people, ambiently, asymmetrically, and only as
 loudly as the moment deserves.
 
 ## How it works
