@@ -9,8 +9,7 @@ room and, quietly, tells you how that room is doing, in the same way you
 can tell a fridge is running or a router is busy without reading a
 single figure.
 
-Built in the open as a FLOSSK project, first shown at Software Freedom
-Kosova (SFK) — an example of what creative, small-scale, unglamorous
+Built in the open as a FLOSSK project, an example of what creative, small-scale, unglamorous
 open-source hardware can do when the goal is expression rather than
 efficiency.
 
@@ -264,9 +263,6 @@ as a finished object:
   sensors in a real room. CO₂'s thresholds are more solid (set
   deliberately, not guessed) but still worth validating against your
   own space.
-- **No enclosure yet.** This is bare electronics on a bench/breadboard
-  — there is no sculptural housing yet. A found-object metal enclosure
-  is planned but not built.
 - **No fourth, melodic voice.** A small speaker and amplifier for a
   more musical/tonal layer (distinct from the three buzzers' glitch
   character) was part of the original design intent and hasn't been
@@ -294,9 +290,8 @@ electronics themselves settle down further.
 
 ## Credits
 
-Built by [Bob](https://github.com/sepse) for
-[FLOSSK](https://flossk.org) — Free Libre Open Source Software Kosova —
-first shown at Software Freedom Kosova (SFK).
+Built by [sepse](https://github.com/sepse) for
+[FLOSSK](https://flossk.org) — Free Libre Open Source Software Kosova.
 
 ## License
 
