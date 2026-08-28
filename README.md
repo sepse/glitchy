@@ -185,9 +185,8 @@ configuration, pulling sensor state from
 [Home Assistant](https://www.home-assistant.io) over its native API —
 no cloud dependency, no proprietary hub.
 
-See ![wiring diagram](media/wiring-diagram.svg) for the full
-system diagram (buzzer/LED wiring, power, and where sensor data actually
-comes from).
+See the full system diagram below (buzzer/LED wiring, power, and where sensor data actually
+comes from). ![wiring diagram](media/wiring-diagram.svg)
 
 ## Hardware
 
