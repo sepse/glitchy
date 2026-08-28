@@ -13,7 +13,7 @@ wifi:
   password: !secret wifi_password
 
   ap:
-    ssid: "glitchy Fallback"
+    ssid: "glitchy Fallback ap"
     password: !secret fallback_ap_password
 
 api:
