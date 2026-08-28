@@ -1,0 +1,88 @@
+<svg width="820" height="560" viewBox="0 0 820 560" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Glitchy wiring and system diagram</title>
+<desc>ESP32-WROOM connected to three passive buzzers via NPN transistors and eight LEDs grouped by sensor, with sensor data pulled over WiFi from an external Home Assistant instance rather than wired directly to the board.</desc>
+
+<rect x="0" y="0" width="820" height="560" fill="#ffffff"/>
+
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Home Assistant box (external, top) -->
+<rect x="290" y="24" width="240" height="70" rx="10" fill="#fdeee2" stroke="#d98a4f" stroke-width="1.2"/>
+<text x="410" y="52" text-anchor="middle" font-size="15" font-weight="600" fill="#7a3f14">Home Assistant</text>
+<text x="410" y="72" text-anchor="middle" font-size="12" fill="#7a3f14">CO2 / VOC / PM2.5 / motion entities</text>
+
+<line x1="410" y1="94" x2="410" y2="130" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+<text x="420" y="115" font-size="11" fill="#555">WiFi, native API</text>
+
+<!-- ESP32 (center hub) -->
+<rect x="300" y="130" width="220" height="90" rx="10" fill="#eef1f5" stroke="#5b6b7d" stroke-width="1.2"/>
+<text x="410" y="168" text-anchor="middle" font-size="16" font-weight="600" fill="#2c3a49">ESP32-WROOM</text>
+<text x="410" y="188" text-anchor="middle" font-size="12" fill="#2c3a49">runs ESPHome, no local sensors</text>
+<text x="410" y="204" text-anchor="middle" font-size="12" fill="#2c3a49">reads all sensor state from HA</text>
+
+<!-- Buzzers (left), each with its own straight horizontal connector -->
+<rect x="60" y="132" width="170" height="42" rx="8" fill="#eaf4ee" stroke="#4c8a63" stroke-width="1.2"/>
+<text x="145" y="148" text-anchor="middle" font-size="12.5" font-weight="600" fill="#204a30">Buzzer 1 -- CO2</text>
+<text x="145" y="164" text-anchor="middle" font-size="11" fill="#204a30">GPIO25 -&gt; NPN base -&gt; buzzer</text>
+<line x1="230" y1="153" x2="300" y2="153" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+<rect x="60" y="184" width="170" height="42" rx="8" fill="#eaf4ee" stroke="#4c8a63" stroke-width="1.2"/>
+<text x="145" y="200" text-anchor="middle" font-size="12.5" font-weight="600" fill="#204a30">Buzzer 2 -- VOC</text>
+<text x="145" y="216" text-anchor="middle" font-size="11" fill="#204a30">GPIO26 -&gt; NPN base -&gt; buzzer</text>
+<line x1="230" y1="205" x2="300" y2="175" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+<rect x="60" y="236" width="170" height="42" rx="8" fill="#eaf4ee" stroke="#4c8a63" stroke-width="1.2"/>
+<text x="145" y="252" text-anchor="middle" font-size="12.5" font-weight="600" fill="#204a30">Buzzer 3 -- PM2.5</text>
+<text x="145" y="268" text-anchor="middle" font-size="11" fill="#204a30">GPIO27 -&gt; NPN base -&gt; buzzer</text>
+<line x1="230" y1="257" x2="300" y2="197" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+<!-- LEDs (right), grouped, each with its own straight connector -->
+<rect x="590" y="120" width="200" height="62" rx="8" fill="#eef0fb" stroke="#5b5cad" stroke-width="1.2"/>
+<text x="690" y="138" text-anchor="middle" font-size="12.5" font-weight="600" fill="#33356e">LEDs 1-3 -- CO2</text>
+<text x="690" y="154" text-anchor="middle" font-size="11" fill="#33356e">GPIO 18, 19, 4</text>
+<text x="690" y="170" text-anchor="middle" font-size="11" fill="#33356e">anchor, echo, wildcard</text>
+<line x1="520" y1="151" x2="590" y2="151" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+<rect x="590" y="192" width="200" height="62" rx="8" fill="#eef0fb" stroke="#5b5cad" stroke-width="1.2"/>
+<text x="690" y="210" text-anchor="middle" font-size="12.5" font-weight="600" fill="#33356e">LEDs 4-6 -- VOC</text>
+<text x="690" y="226" text-anchor="middle" font-size="11" fill="#33356e">GPIO 5, 13, 16</text>
+<text x="690" y="242" text-anchor="middle" font-size="11" fill="#33356e">anchor, echo, wildcard</text>
+<line x1="520" y1="197" x2="590" y2="223" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+<rect x="590" y="264" width="200" height="48" rx="8" fill="#eef0fb" stroke="#5b5cad" stroke-width="1.2"/>
+<text x="690" y="284" text-anchor="middle" font-size="12.5" font-weight="600" fill="#33356e">LEDs 7-8 -- PM2.5</text>
+<text x="690" y="300" text-anchor="middle" font-size="11" fill="#33356e">GPIO 17, 14 -- anchor, echo</text>
+<line x1="520" y1="211" x2="590" y2="288" stroke="#555" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+<!-- Per-component wiring detail, bottom: two clearly separated columns -->
+<rect x="40" y="350" width="740" height="180" rx="10" fill="#fafafa" stroke="#cccccc" stroke-width="1"/>
+<text x="60" y="378" font-size="13" font-weight="600" fill="#333">Per-component wiring</text>
+
+<!-- vertical divider between the two columns -->
+<line x1="420" y1="378" x2="420" y2="512" stroke="#dddddd" stroke-width="1"/>
+
+<!-- Left column -->
+<text x="60" y="406" font-size="12" font-weight="600" fill="#333">Buzzer stage</text>
+<text x="60" y="424" font-size="11" fill="#555">GPIO -&gt; ~1k&#937; base resistor -&gt; NPN base</text>
+<text x="60" y="440" font-size="11" fill="#555">collector -&gt; buzzer -&gt; 3.3V/5V | emitter -&gt; GND</text>
+<text x="60" y="456" font-size="11" fill="#555">(PWM passes through the transistor to the buzzer)</text>
+
+<text x="60" y="484" font-size="12" font-weight="600" fill="#333">LED stage</text>
+<text x="60" y="502" font-size="11" fill="#555">GPIO -&gt; ~220-330&#937; resistor -&gt; LED anode</text>
+<text x="60" y="518" font-size="11" fill="#555">LED cathode -&gt; GND</text>
+
+<!-- Right column -->
+<text x="440" y="406" font-size="12" font-weight="600" fill="#333">Power</text>
+<text x="440" y="424" font-size="11" fill="#555">USB 5V into ESP32-WROOM dev board</text>
+<text x="440" y="440" font-size="11" fill="#555">(onboard 3.3V regulator)</text>
+<text x="440" y="456" font-size="11" fill="#555">No battery operation tested yet</text>
+
+<text x="440" y="484" font-size="12" font-weight="600" fill="#333">Data flow</text>
+<text x="440" y="502" font-size="11" fill="#555">All sensor values arrive over WiFi via</text>
+<text x="440" y="518" font-size="11" fill="#555">Home Assistant's API -- none wired to the board</text>
+
+</svg>
