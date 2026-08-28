@@ -2,8 +2,8 @@
 
 *An ambient sound and light device that lets a room sing its own air quality.*
 
-Glitchy is a small standalone device — an ESP32, three buzzers, eight
-LEDs — that turns CO₂, VOC, particulate matter, and presence into sound
+Glitchy is a small standalone device, an ESP32, three buzzers, eight
+LEDs that turns CO₂, VOC, particulate matter, and presence into sound
 and light. It doesn't display numbers. It doesn't alarm. It sits in a
 room and, quietly, tells you how that room is doing, in the same way you
 can tell a fridge is running or a router is busy without reading a
@@ -17,7 +17,7 @@ efficiency.
 
 ## What you need
 
-This repo is firmware for the sensing/output device — it does **not**
+This repo is firmware for the sensing/output device, it does **not**
 include sensor wiring or a home automation setup. Before this is useful
 to you, you need:
 
@@ -29,7 +29,7 @@ to you, you need:
   you like (another ESPHome device, a Zigbee/Z-Wave sensor, a
   manufacturer's official integration, etc.)
 
-Glitchy pulls all sensor data from Home Assistant over its native API —
+Glitchy pulls all sensor data from Home Assistant over its native API,
 it does not read any air-quality sensor directly, and this repo doesn't
 cover getting sensors into Home Assistant in the first place. If you
 don't have that yet, get your sensors showing up as entities in Home
@@ -38,14 +38,14 @@ Assistant first, then come back here.
 ## Motivation
 
 Air quality is invisible. A room can be quietly filling with CO₂ for
-hours — the kind of slow staleness that makes a meeting drag or a
-workspace feel subtly wrong — and the only way most people would know is
+hours, the kind of slow staleness that makes a meeting drag or a
+workspace feel subtly wrong, and the only way most people would know is
 a number on a dashboard nobody is looking at. Air quality sensors exist
 in plenty of homes and offices already; almost none of them are ever
 *felt*. They're logged, graphed, and ignored.
 
 This project started from a simple question: what if the room could just
-tell you, the way a living space tells you things — through ambience,
+tell you, the way a living space tells you things - through ambience,
 through a change in mood, without demanding your attention or shouting
 for it either. Not a dashboard. Not an alarm. Something closer to a pet,
 or a very quiet appliance, that has its own way of being present.
@@ -54,7 +54,7 @@ It's also, deliberately, a piece of *open-source* creative technology —
 built with parts anyone can buy, running entirely on open tools (ESPHome,
 Home Assistant), documented openly, and meant to be forked, misread,
 rewired, and improved. FLOSSK exists to show that open-source work can be
-rigorous, useful, *and* strange or beautiful — this is a small
+rigorous, useful, *and* strange or beautiful, this is a small
 demonstration of that last part.
 
 ## Sonification: letting the room sing its own state
@@ -62,14 +62,14 @@ demonstration of that last part.
 **Sonification** is the practice of representing data as sound instead of
 as an image, a number, or a graph. It's an old idea with a very familiar
 example: a Geiger counter doesn't show you a radiation reading, it
-*clicks faster* — you understand the danger in your gut before you'd
+*clicks faster* - you understand the danger in your gut before you'd
 have time to read a display. That immediacy, and the fact that sound
 reaches you even when you're not looking, is exactly what this project
 needed.
 
 A screen requires attention. You have to look at it, at the right moment,
 and interpret a number against a threshold you probably don't remember.
-Sound and ambient light don't — they're peripheral by nature. You can be
+Sound and ambient light don't - they're peripheral by nature. You can be
 across the room, half paying attention to something else, and still pick
 up that something changed. That's the quality this project is built
 around: information that lives in a space rather than sitting in an app,
@@ -77,7 +77,7 @@ felt rather than read. It's closer to how you already sense a room is
 "stuffy" than to how you'd check a weather app.
 
 Choosing sound (and light) over a display also meant choosing a
-*character*, not just a channel — and that turned out to be most of the
+*character*, not just a channel, and that turned out to be most of the
 actual design work.
 
 **Each sensor got its own voice.** CO₂, VOC, and particulate matter each
@@ -89,39 +89,39 @@ a particular contact.
 
 **Air quality bands became behaviors, not just volume.** Early versions
 of this device just made things louder and faster as air quality
-worsened — brighter LEDs, quicker blinks, more frequent buzzes. It read
+worsened, brighter LEDs, quicker blinks, more frequent buzzes. It read
 as *busy*, not as *meaningful*. The current version instead gives each
 air-quality band (calm, elevated, high) its own distinct character:
 
-- **Calm** blinks and buzzes steadily and evenly — a room quietly ticking
+- **Calm** blinks and buzzes steadily and evenly - a room quietly ticking
   over, the way an idle machine still shows a heartbeat.
-- **Elevated** gets restless — blinks arrive in short irregular bursts,
+- **Elevated** gets restless - blinks arrive in short irregular bursts,
   buzzers tick a little more insistently.
-- **High** genuinely *glitches* — stutters, dropouts, frequency jumps,
+- **High** genuinely *glitches* - stutters, dropouts, frequency jumps,
   occasional "stuck" flickers. The room doesn't just get louder, it
   starts to sound like something under strain.
 
-That's the reasoning behind the glitch aesthetic specifically — and the
+That's the reasoning behind the glitch aesthetic specifically, and the
 project's name: corrupted, irregular, imperfect sound is a more honest
 metaphor for degraded air than a clean tone turned up louder would be.
-Bad air isn't "more" of a good thing — it's a system starting to
+Bad air isn't "more" of a good thing - it's a system starting to
 misbehave, and the sound design tries to mirror that directly rather
 than just scaling a dial.
 
 **Even within one sensor's group, the LEDs aren't identical.** Each group
-of LEDs has roles — an anchor that always shows the sensor's true current
+of LEDs has roles, an anchor that always shows the sensor's true current
 state clearly, an echo that trails slightly behind it like a reflection,
 and (for CO₂ and VOC) a wildcard that mostly follows along but
 occasionally borrows a more agitated behavior at random. That
 unpredictability is deliberate: a purely synchronized, deterministic
-readout feels mechanical and eventually invisible — you stop noticing
+readout feels mechanical and eventually invisible, you stop noticing
 something that's perfectly regular. A small amount of asymmetry and
 randomness is what makes it read as *alive* rather than as an indicator
 light with extra steps.
 
 **And it had to earn the right to make noise.** A device that reacts to
 every small fluctuation in sensor data becomes background noise you learn
-to tune out — the opposite of the goal. So sound and light events are
+to tune out - the opposite of the goal. So sound and light events are
 throttled deliberately: air-quality *events* only fire on real
 threshold crossings, not on every reading; the two most talkative
 sensors (VOC and PM2.5) only make event-level sound while the room shows
@@ -236,7 +236,7 @@ glitchy/
 3. Copy `firmware/secrets.yaml.example` to `firmware/secrets.yaml` and
    fill in your WiFi credentials and a generated API encryption key
    (command included as a comment in the file). `secrets.yaml` is
-   gitignored — never commit your real one.
+   gitignored, never commit your real one.
 4. Update the `entity_id:` values in `firmware/glitchy.yaml` to match
    your own Home Assistant sensor entities.
 5. Validate before flashing:
@@ -267,7 +267,7 @@ as a finished object:
 - **Ambient-layer tuning is by feel, not measurement.** The blink
   timing, ambient sound frequency, and "wildcard" glitch probabilities
   were tuned by ear/eye during development, not against any formal
-  metric — they're reasonable defaults, not validated optimal values.
+  metric, they're reasonable defaults, not validated optimal values.
 - **Power draw hasn't been benchmarked.** See the note under
   [Hardware](#hardware) — no current-draw measurements have been taken,
   and only USB power has been tested.
