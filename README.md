@@ -1,6 +1,6 @@
 # Glitchy
 
-*An ambient sound and light sculpture that lets a room sing its own air quality.*
+*An ambient sound and light device that lets a room sing its own air quality.*
 
 Glitchy is a small standalone device — an ESP32, three buzzers, eight
 LEDs — that turns CO₂, VOC, particulate matter, and presence into sound
@@ -254,11 +254,6 @@ glitchy/
 Honest accounting of what's not yet solid, rather than presenting this
 as a finished object:
 
-- **Piezo buzzer volume is modest.** Passive piezo buzzers driven
-  directly (even through a transistor stage) are not loud — audible
-  clearly at close/room range, but this is not a project that will fill
-  a large or noisy space with sound. A powered speaker is a planned
-  addition (see below), not yet built.
 - **VOC and PM2.5 thresholds are untuned.** The band edges in the table
   above are reasonable starting guesses based on common air-quality
   breakpoints, not measured against real data from these specific
