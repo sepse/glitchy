@@ -12,7 +12,7 @@ single figure.
 Built in the open as a FLOSSK project, an example of what creative, small-scale, unglamorous
 open-source hardware can do when the goal is expression rather than
 efficiency.
-![Glitchy](media/20260825_122051.jpg)
+
 <img src="media/20260825_122051.jpg" width="180">
 
 ## What you need
